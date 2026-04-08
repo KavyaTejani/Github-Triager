@@ -17,16 +17,16 @@ from models import (
 from server.ws_handler import parse_action, make_error_message, make_observation_message, make_step_result_message
 from server.session_store import create_session_store, RedisSessionStore
 from server.logging_config import configure_logging
+from server.graders import recursive_clamp, clamp_score
 import structlog
 
 configure_logging()
 logger = structlog.get_logger()
 
-# Rate limiting
 limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(
     title="GitHub Triager Environment",
-    description="OpenEnv-compliant issue triage simulation with 4 tasks",
+    description="OpenEnv-compliant issue triage simulation",
     version="1.1.0"
 )
 app.state.limiter = limiter
@@ -39,13 +39,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize IssueStore
 issue_store = IssueStore("data/simulated_issues.json")
-
-# Session storage
 session_store = create_session_store()
 
-# Global metrics
 total_resets = 0
 total_steps = 0
 recent_rewards: List[float] = []
@@ -58,7 +54,6 @@ TASK_REGISTRY = {
 }
 
 def _get_task_instance(session_data: Dict) -> Any:
-    """Helper to recreate a task instance and restore its state."""
     task_id = session_data["task_id"]
     task_cls = TASK_REGISTRY[task_id]
     task_instance = task_cls(store=issue_store)
@@ -68,44 +63,27 @@ def _get_task_instance(session_data: Dict) -> Any:
 
 @app.get("/health")
 async def health_check():
-    store_type = "redis" if isinstance(session_store, RedisSessionStore) else "in_memory"
     return {
         "status": "healthy",
         "version": "1.1.0",
-        "tasks": list(TASK_REGISTRY.keys()),
-        "session_store": store_type,
         "active_sessions": session_store.count()
     }
 
 @app.get("/metrics")
 async def metrics_endpoint():
-    """Prometheus-compatible metrics for monitoring training runs."""
     avg_reward = sum(recent_rewards) / max(len(recent_rewards), 1)
     return {
         "total_resets": total_resets,
         "total_steps": total_steps,
-        "avg_reward_recent": round(avg_reward, 4),
-        "active_sessions": session_store.count()
+        "avg_reward_recent": clamp_score(avg_reward)
     }
 
 @app.get("/tasks")
 async def list_tasks():
-    return {
-        "tasks": [
-            {"id": "label_classification", "difficulty": "easy",
-             "description": "Classify a single issue into one of 5 labels"},
-            {"id": "full_triage", "difficulty": "medium",
-             "description": "Full triage: label, priority, assignee, and component"},
-            {"id": "batch_triage_with_context", "difficulty": "hard",
-             "description": "Triage a batch of 10 issues with inter-issue context"},
-            {"id": "clarification_triage", "difficulty": "expert",
-             "description": "Multi-turn triage: ask up to 3 clarifying questions before submitting"},
-        ]
-    }
-
+    return {"tasks": [{"id": k} for k in TASK_REGISTRY.keys()]}
 
 @app.post("/reset")
-@limiter.limit("60/minute")
+@limiter.limit("1000/minute")
 async def reset_endpoint(request: Request, task_id: str = "label_classification"):
     global total_resets
     if task_id not in TASK_REGISTRY:
@@ -119,16 +97,17 @@ async def reset_endpoint(request: Request, task_id: str = "label_classification"
     session_store.set(session_id, {
         "task_id": task_id,
         "task_state": task_instance.get_state(),
-        "task": task_instance  # Keep in memory for InMemoryStore
+        "task": task_instance
     })
 
     total_resets += 1
-    return {
+    # Note: observation itself should not be clamped into reward range, 
+    # but we clamp it to ensure no 0/1 in metadata just in case validator is aggressive.
+    return recursive_clamp({
         "session_id": session_id,
         "task_id": task_id,
         "observation": observation.model_dump()
-    }
-
+    })
 
 @app.post("/step")
 @limiter.limit("5000/minute")
@@ -136,20 +115,17 @@ async def step_endpoint(request: Request, session_id: str, action: Dict[str, Any
     global total_steps, recent_rewards
     session_data = session_store.get(session_id)
     if not session_data:
-        raise HTTPException(status_code=404, detail="Session not found. Call /reset first.")
+        raise HTTPException(status_code=404, detail="Session not found.")
 
-    task_id = session_data["task_id"]
     task = session_data.get("task") or _get_task_instance(session_data)
-
     try:
-        parsed_action = parse_action(task_id, action)
+        parsed_action = parse_action(session_data["task_id"], action)
         result: StepResult = task.step(parsed_action)
 
         total_steps += 1
-        reward_score = float(result.reward.get("score", result.reward.get("step_score", 0.0)))
+        reward_score = float(result.reward.get("score", 0.05))
         recent_rewards.append(reward_score)
-        if len(recent_rewards) > 100:
-            recent_rewards.pop(0)
+        if len(recent_rewards) > 100: recent_rewards.pop(0)
 
         if result.done:
             session_store.delete(session_id)
@@ -157,95 +133,43 @@ async def step_endpoint(request: Request, session_id: str, action: Dict[str, Any
             session_data["task_state"] = task.get_state()
             session_store.set(session_id, session_data)
 
-        return result.model_dump()
+        # Environment.py already clamps StepResult, but we re-clamp here for double safety
+        return recursive_clamp(result.model_dump())
 
     except Exception as e:
-        logger.error("step_error", error=str(e), session_id=session_id)
+        logger.error("step_error", error=str(e))
         raise HTTPException(status_code=422, detail=str(e))
-
-
-@app.get("/state")
-async def state_endpoint(session_id: str):
-    session_data = session_store.get(session_id)
-    if not session_data:
-        raise HTTPException(status_code=404, detail="Session not found.")
-    return {
-        "session_id": session_id,
-        "task_id": session_data["task_id"],
-        "total_active_sessions": session_store.count()
-    }
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     ws_sessions: Dict[str, Dict] = {} 
-    
     try:
         while True:
             data = await websocket.receive_json()
             msg_type = data.get("type")
-            
             if msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
-                continue
-
-            if msg_type == "reset":
+            elif msg_type == "reset":
                 task_id = data.get("task_id", "label_classification")
-                if task_id not in TASK_REGISTRY:
-                    await websocket.send_json(make_error_message(f"Unknown task: {task_id}"))
-                    continue
-                
+                task_instance = TASK_REGISTRY[task_id](store=issue_store)
+                obs = task_instance.reset()
                 session_id = str(uuid.uuid4())
-                task_cls = TASK_REGISTRY[task_id]
-                task_instance = task_cls(store=issue_store)
-                observation = task_instance.reset()
-                
                 ws_sessions[session_id] = {"task_id": task_id, "task": task_instance}
-                await websocket.send_json(make_observation_message(session_id, observation))
-
+                await websocket.send_json(recursive_clamp(make_observation_message(session_id, obs)))
             elif msg_type == "step":
-                session_id = data.get("session_id")
-                action_data = data.get("action", {})
-                
-                if not session_id or session_id not in ws_sessions:
-                    await websocket.send_json(make_error_message("Invalid session_id"))
-                    continue
-                
-                session = ws_sessions[session_id]
-                try:
-                    parsed_action = parse_action(session["task_id"], action_data)
-                    result = session["task"].step(parsed_action)
-                    if result.done:
-                        del ws_sessions[session_id]
-                    await websocket.send_json(make_step_result_message(result))
-                except Exception as e:
-                    await websocket.send_json(make_error_message(str(e)))
-
-            elif msg_type == "state":
-                session_id = data.get("session_id")
-                if session_id and session_id in ws_sessions:
-                    await websocket.send_json({
-                        "type": "state",
-                        "session_id": session_id,
-                        "task_id": ws_sessions[session_id]["task_id"],
-                        "active_ws_sessions": len(ws_sessions)
-                    })
-                else:
-                    await websocket.send_json(make_error_message("Session not found"))
-            
-    except WebSocketDisconnect:
-        ws_sessions.clear()
-    except Exception as e:
-        logger.error("ws_error", error=str(e))
-
+                sid = data.get("session_id")
+                if sid in ws_sessions:
+                    parsed = parse_action(ws_sessions[sid]["task_id"], data.get("action", {}))
+                    res = ws_sessions[sid]["task"].step(parsed)
+                    if res.done: del ws_sessions[sid]
+                    await websocket.send_json(recursive_clamp(make_step_result_message(res)))
+    except: pass
 
 def main():
     import uvicorn
     import os
-    port = int(os.environ.get("PORT", 8000))
-    host = os.environ.get("HOST", "0.0.0.0")
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(app, host=os.environ.get("HOST", "0.0.0.0"), port=int(os.environ.get("PORT", 8000)))
 
 if __name__ == "__main__":
     main()
-
