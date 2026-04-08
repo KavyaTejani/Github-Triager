@@ -1,5 +1,5 @@
 name: github-triager
-version: 1.0.0
+version: 1.1.0
 description: GitHub issue triage RL environment
 tasks:
   - id: label_classification
@@ -8,6 +8,8 @@ tasks:
     difficulty: medium
   - id: batch_triage_with_context
     difficulty: hard
+  - id: clarification_triage
+    difficulty: expert
 server:
   host: 0.0.0.0
   port: 8000

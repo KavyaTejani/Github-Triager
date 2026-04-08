@@ -131,7 +131,7 @@ async def reset_endpoint(request: Request, task_id: str = "label_classification"
 
 
 @app.post("/step")
-@limiter.limit("300/minute")
+@limiter.limit("5000/minute")
 async def step_endpoint(request: Request, session_id: str, action: Dict[str, Any]):
     global total_steps, recent_rewards
     session_data = session_store.get(session_id)
@@ -248,3 +248,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
