@@ -1,0 +1,34 @@
+{
+  "components": {
+    "api": {
+      "team": "backend_team",
+      "files": ["server/app.py", "server/environment.py", "client.py"],
+      "description": "REST API and WebSocket server"
+    },
+    "ui": {
+      "team": "frontend_team",
+      "files": ["static/", "templates/"],
+      "description": "Web interface and dashboard"
+    },
+    "auth": {
+      "team": "security_team",
+      "files": ["server/auth.py", "server/middleware.py"],
+      "description": "Authentication and authorization"
+    },
+    "database": {
+      "team": "backend_team",
+      "files": ["data/", "server/store.py"],
+      "description": "Data storage and retrieval"
+    },
+    "docs": {
+      "team": "docs_team",
+      "files": ["README.md", "docs/"],
+      "description": "Documentation and guides"
+    },
+    "ci_cd": {
+      "team": "devops_team",
+      "files": [".github/", "Dockerfile", "pyproject.toml"],
+      "description": "CI/CD pipeline and containerization"
+    }
+  }
+}
