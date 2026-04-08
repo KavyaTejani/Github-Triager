@@ -17,227 +17,62 @@ from openai import OpenAI
 
 from client import GitHubTriagerClient
 
-# OpenEnv Mandatory Environment Variables
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
 
-TEMPERATURE = 0.2
-MAX_TOKENS = 300
-
 llm = OpenAI(api_key=API_KEY, base_url=API_BASE_URL)
 
-
 SYSTEM_PROMPTS = {
-    "label_classification": textwrap.dedent("""
-        You are a GitHub issue classifier. Given an issue, respond with ONLY a JSON object:
-        {"label": "bug|feature|documentation|question|enhancement"}
-    """).strip(),
-
-    "full_triage": textwrap.dedent("""
-        You are an expert GitHub maintainer. Triage the issue. Respond with ONLY a JSON object:
-        {
-            "label": "bug|feature|documentation|question|enhancement",
-            "priority": "critical|high|medium|low",
-            "suggested_assignee": "team_name or null",
-            "suggested_component": "component_name or null"
-        }
-        Priority guide:
-        - critical: System down, data loss, security vulnerability
-        - high: Major functionality broken, many users affected
-        - medium: Partial breakage, workaround exists
-        - low: Minor, cosmetic, edge case
-        
-        The observation includes a `project_map` field showing which teams own which components.
-        Use it to determine the correct `suggested_assignee` and `suggested_component`.
-    """).strip(),
-
-    "batch_triage_with_context": textwrap.dedent("""
-        You are an expert GitHub maintainer triaging a batch of issues.
-        Consider inter-issue context: detect duplicates, balance assignee workload,
-        notice priority escalation patterns.
-        Respond with ONLY a JSON object:
-        {
-            "label": "bug|feature|documentation|question|enhancement",
-            "priority": "critical|high|medium|low",
-            "suggested_assignee": "team_name or null",
-            "suggested_component": "component_name or null",
-            "is_duplicate_of": "issue_id or null",
-            "priority_justification": "brief reason or null"
-        }
-        
-        The observation includes a `project_map` field showing which teams own which components.
-        Use it to determine the correct `suggested_assignee` and `suggested_component`.
-    """).strip(),
-
-    "clarification_triage": textwrap.dedent("""
-        You are triaging a vague GitHub issue. You may ask up to 3 clarifying questions
-        before submitting your final triage.
-        
-        To ask a question, respond with:
-        {"action_type": "ask_clarification", "question": "your question here"}
-        
-        To submit final triage, respond with:
-        {
-            "action_type": "submit_triage",
-            "label": "bug|feature|documentation|question|enhancement",
-            "priority": "critical|high|medium|low",
-            "suggested_assignee": "team_name or null",
-            "suggested_component": "component_name or null",
-            "confidence": 0.0-1.0
-        }
-        
-        Strategy: Only ask questions when truly necessary. Each question costs 0.08 from your score.
-        If you're already confident, submit immediately.
-    """).strip()
+    "label_classification": "Respond with ONLY a JSON object: {\"label\": \"bug|feature|documentation|question|enhancement\"}",
+    "full_triage": "Triage the issue. Respond with ONLY a JSON object: {\"label\": \"...\", \"priority\": \"critical|high|medium|low\", \"suggested_assignee\": \"...\", \"suggested_component\": \"...\"}",
+    "batch_triage_with_context": "Triage the batch issue. Respond with ONLY a JSON object: {\"label\": \"...\", \"priority\": \"...\", \"suggested_assignee\": \"...\", \"suggested_component\": \"...\", \"is_duplicate_of\": \"...\", \"priority_justification\": \"...\"}",
+    "clarification_triage": "Vague issue. Ask question: {\"action_type\": \"ask_clarification\", \"question\": \"...\"} OR Submit triage: {\"action_type\": \"submit_triage\", \"label\": \"...\", \"priority\": \"...\", \"suggested_assignee\": \"...\", \"suggested_component\": \"...\", \"confidence\": 0.9}"
 }
 
-
-def build_user_prompt(observation: dict, task_id: str) -> str:
-    issue = observation.get("issue", observation)
-    
-    prompt = ""
-    if task_id in ("label_classification", "full_triage"):
-        prompt = textwrap.dedent(f"""
-            Issue #{issue.get('issue_id')}
-            Title: {issue.get('title')}
-            Body:
-            {issue.get('body', '')[:2000]}
-            Author: {issue.get('author')}
-            Created: {issue.get('created_at')}
-        """).strip()
-    elif task_id == "batch_triage_with_context":
-        prior = observation.get("prior_triage_decisions", [])
-        dups = observation.get("duplicate_candidates", [])
-        prompt = textwrap.dedent(f"""
-            Issue #{issue.get('issue_id')} (batch position {observation.get('batch_position', 0)+1}/{observation.get('batch_size', 10)})
-            Title: {issue.get('title')}
-            Body:
-            {issue.get('body', '')[:2000]}
-            Author: {issue.get('author')}
-
-            Prior triage decisions this batch:
-            {json.dumps(prior[-5:], indent=2) if prior else 'None (first issue)'}
-
-            Possible duplicate candidates (match these IDs if you find a duplicate):
-            {dups if dups else 'None detected in prior steps'}
-        """).strip()
-    elif task_id == "clarification_triage":
-        history = observation.get("clarification_history", [])
-        turn = observation.get("turn", 0)
-        max_turns = observation.get("max_turns", 3)
-        
-        history_text = "\n".join(
-            [f"Q: {h['question']}\nA: {h['answer']}" for h in history]
-        ) if history else "None yet."
-        
-        prompt = textwrap.dedent(f"""
-            Issue #{issue.get('issue_id')}
-            Title: {issue.get('title')}
-            Body:
-            {issue.get('body', '')[:2000]}
-            
-            Turn: {turn}/{max_turns} (remaining questions: {max_turns - turn})
-            Clarification History:
-            {history_text}
-        """).strip()
-
-    if 'project_map' in issue:
-        pm = issue['project_map']
-        map_lines = []
-        for comp, info in pm.get('components', {}).items():
-            map_lines.append(f"- '{comp}' → {info['team']} ({info['description']})")
-        prompt += "\n\nProject Map:\n" + "\n".join(map_lines)
-    
-    return prompt
-
-
-def parse_response(text: str) -> dict:
-    match = re.search(r'\{[^}]+\}', text, re.DOTALL)
-    if not match:
-        raise ValueError(f"No JSON found in response: {text}")
+def safe_score(s: Any) -> str:
     try:
-        return json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return {"label": "question", "priority": "medium"}
-
-
-def safe_score(s: float) -> float:
-    """Strictly clamps score to the (0.01, 0.99) interval for validation logs."""
-    return round(max(0.01, min(0.99, s)), 4)
-
+        val = float(s)
+        return f"{max(0.01, min(0.99, val)):.4f}"
+    except:
+        return "0.0100"
 
 def run_task(env: GitHubTriagerClient, task_id: str, max_steps: int = 15):
-    # MANDATORY LOG: [START]
     print(f"[START] task_id=\"{task_id}\"")
-
     try:
         observation = env.reset(task_id=task_id)
-        total_reward = 0.0
-        steps = 0
-
+        last_score = 0.01
         for step in range(1, max_steps + 1):
-            prompt = build_user_prompt(observation, task_id)
-
             try:
                 response = llm.chat.completions.create(
                     model=MODEL_NAME,
-                    messages=[
-                        {"role": "system", "content": SYSTEM_PROMPTS[task_id]},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=TEMPERATURE,
-                    max_tokens=MAX_TOKENS
+                    messages=[{"role": "system", "content": SYSTEM_PROMPTS[task_id]}, {"role": "user", "content": str(observation)}],
+                    temperature=0.2, max_tokens=300
                 )
-                action = parse_response(response.choices[0].message.content)
-            except Exception:
+                action = json.loads(re.search(r'\{[^}]+\}', response.choices[0].message.content, re.DOTALL).group(0))
+            except:
                 action = {"label": "question", "priority": "medium", "confidence": 0.5}
 
             result = env.step(action)
             reward_data = result.get("reward", {})
+            last_score = float(reward_data.get("score", 0.01))
             
-            score = float(reward_data.get("score", reward_data.get("step_score", 0.01)))
-            done = result.get("done", True)
-            steps += 1
-
-            # MANDATORY LOG: [STEP]
-            print(f"[STEP] step={step}, score={safe_score(score):.4f}, done={done}")
-            
-            total_reward += score
-
-            if done:
-                # Handle Trajectory/Final scoring if applicable
-                # We prioritize the server's final total over local summation
-                final_val = reward_data.get("trajectory_score", reward_data.get("score"))
-                if final_val is not None:
-                    total_reward = float(final_val)
-                break
-
+            print(f"[STEP] step={step}, score={safe_score(last_score)}, done={result.get('done')}")
+            if result.get("done"): break
             observation = result.get("observation", observation)
 
-        # MANDATORY LOG: [END]
-        print(f"[END] total_reward={safe_score(total_reward):.4f}")
-        return total_reward
-        
+        # For OpenEnv evaluation, the final log must be the clamped total reward
+        # In this environment, 'score' in the final step is the trajectory/final total
+        print(f"[END] total_reward={safe_score(last_score)}")
     except Exception as e:
-        print(f"Error running task {task_id}: {e}")
-        # Return 0.01 instead of 0.00 to satisfy (0, 1) constraint
         print(f"[END] total_reward=0.0100")
-        return 0.01
-
 
 def main():
     with GitHubTriagerClient(base_url="http://localhost:8000") as env:
-        try:
-            env.health()
-        except Exception:
-            return
-
-        run_task(env, "label_classification")
-        run_task(env, "full_triage")
-        run_task(env, "batch_triage_with_context", max_steps=10)
-        run_task(env, "clarification_triage", max_steps=5)
-
+        try: env.health()
+        except: return
+        for tid in ["label_classification", "full_triage", "batch_triage_with_context", "clarification_triage"]:
+            run_task(env, tid)
 
 if __name__ == "__main__":
     main()
