@@ -21,21 +21,21 @@ MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
 
 llm = OpenAI(api_key=API_KEY, base_url=API_BASE_URL)
 
-def safe_score(s: Any) -> str:
+def safe_str(s: Any) -> str:
+    """Bulletproof string formatting for validation compliance."""
     try:
         val = float(s)
-        if val <= 0.0: return "0.0100"
-        if val >= 1.0: return "0.9900"
-        return f"{val:.4f}"
+        clamped = max(0.05, min(0.95, val))
+        return f"{clamped:.4f}"
     except:
-        return "0.0100"
+        return "0.0500"
 
-def run_task(env: GitHubTriagerClient, task_id: str, max_steps: int = 15):
+def run_task(env: GitHubTriagerClient, task_id: str):
     print(f"[START] task_id=\"{task_id}\"")
     try:
         observation = env.reset(task_id=task_id)
-        last_score = 0.01
-        for step in range(1, max_steps + 1):
+        last_score = 0.05
+        for step in range(1, 15):
             try:
                 response = llm.chat.completions.create(
                     model=MODEL_NAME,
@@ -48,21 +48,20 @@ def run_task(env: GitHubTriagerClient, task_id: str, max_steps: int = 15):
 
             result = env.step(action)
             reward_data = result.get("reward", {})
-            last_score = float(reward_data.get("score", 0.01))
+            last_score = float(reward_data.get("score", 0.05))
             
-            print(f"[STEP] step={step}, score={safe_score(last_score)}, done={result.get('done')}")
+            print(f"[STEP] step={step}, score={safe_str(last_score)}, done={result.get('done')}")
             if result.get("done"): break
             observation = result.get("observation", observation)
 
-        print(f"[END] total_reward={safe_score(last_score)}")
-    except Exception as e:
-        print(f"[END] total_reward=0.0100")
+        print(f"[END] total_reward={safe_str(last_score)}")
+    except:
+        print(f"[END] total_reward=0.0500")
 
 def main():
     with GitHubTriagerClient(base_url="http://localhost:8000") as env:
         try: env.health()
         except: return
-        # Run all tasks registered in openenv.yaml
         for tid in ["label_classification", "full_triage", "batch_triage_with_context", "clarification_triage"]:
             run_task(env, tid)
 
