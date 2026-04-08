@@ -338,7 +338,7 @@ class ClarificationTask:
         if self.turn >= self.MAX_TURNS:
             return StepResult(
                 observation=None,
-                reward={"score": 0.0, "reason": "max_turns_exceeded"},
+                reward={"score": 0.01, "reason": "max_turns_exceeded"},
                 done=True,
                 info={"turn": self.turn, "max_turns": self.MAX_TURNS}
             )
@@ -352,7 +352,7 @@ class ClarificationTask:
         
         return StepResult(
             observation=self._current_observation().model_dump(),
-            reward={"score": 0.0, "turn": self.turn},
+            reward={"score": 0.01, "turn": self.turn},
             done=False,
             info={"turn": self.turn, "answer": answer}
         )

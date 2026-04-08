@@ -45,7 +45,7 @@ class LabelClassificationAction(BaseModel):
 
 class LabelClassificationReward(BaseModel):
     """Reward for Task 1: binary correctness."""
-    score: float = Field(..., ge=0.0, le=1.0)
+    score: float = Field(..., gt=0.0, lt=1.0)
     correct: bool
     expected_label: str
     predicted_label: str
@@ -65,7 +65,7 @@ class FullTriageAction(BaseModel):
 
 class FullTriageReward(BaseModel):
     """Reward for Task 2: weighted component scores."""
-    score: float = Field(..., ge=0.0, le=1.0)
+    score: float = Field(..., gt=0.0, lt=1.0)
     label_correct: bool
     priority_correct: bool
     assignee_correct: bool
@@ -96,8 +96,9 @@ class BatchTriageReward(BaseModel):
     Reward for Task 3: trajectory-level score computed at episode end.
     Includes per-step partial scores AND trajectory bonuses/penalties.
     """
-    step_score: float = Field(..., ge=-1.0, le=1.0)
-    trajectory_score: Optional[float] = Field(None, ge=-1.0, le=2.0)
+    score: float = Field(..., gt=0.0, lt=1.0)
+    step_score: float = Field(..., gt=0.0, lt=1.0)
+    trajectory_score: Optional[float] = Field(None, gt=0.0, lt=1.0)
     duplicate_detection_bonus: float = 0.0
     workload_balance_bonus: float = 0.0
     consistency_penalty: float = 0.0
@@ -128,8 +129,8 @@ class ClarificationTriageAction(BaseModel):
     priority: PriorityEnum
     suggested_assignee: Optional[str] = None
     suggested_component: Optional[str] = None
-    confidence: float = Field(..., ge=0.0, le=1.0,
-        description="Agent's self-reported confidence in its triage (0.0 to 1.0)")
+    confidence: float = Field(..., gt=0.0, lt=1.0,
+        description="Agent's self-reported confidence in its triage (0.01 to 0.99)")
 
 class ClarificationObservation(BaseModel):
     """Observation for Task 4: includes simulated user responses."""
@@ -142,7 +143,7 @@ class ClarificationObservation(BaseModel):
 
 class ClarificationReward(BaseModel):
     """Reward for Task 4: correct triage penalized by number of turns taken."""
-    score: float = Field(..., ge=0.0, le=1.0)
+    score: float = Field(..., gt=0.0, lt=1.0)
     base_triage_score: float
     turn_penalty: float
     turns_taken: int

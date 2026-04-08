@@ -1,4 +1,4 @@
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from models import (
     LabelClassificationAction, LabelClassificationReward,
     FullTriageAction, FullTriageReward,
@@ -92,12 +92,7 @@ class BatchTriageGrader:
             suggested_assignee=action.suggested_assignee,
             suggested_component=action.suggested_component
         )
-        # We use the raw score logic but clamp the result
         base_reward = self.full_triage_grader.grade(base_action, gold)
-        
-        # We need the raw score before clamping for BatchTriage internal math
-        # but the reward model expects a score. 
-        # For Task 3, step_score is partial.
         
         dup_bonus = 0.0
         if gold.get('duplicate_of') is not None:
@@ -108,12 +103,14 @@ class BatchTriageGrader:
 
         # Use 0.01-0.99 range for step_score too
         raw_step_score = (base_reward.score - 0.01) / 0.98 + dup_bonus
+        clamped_step_score = clamp_score(raw_step_score)
         
         self.trajectory_actions.append(action.model_dump(mode='json'))
         self.trajectory_golds.append(gold)
 
         return BatchTriageReward(
-            step_score=clamp_score(raw_step_score),
+            score=clamped_step_score,
+            step_score=clamped_step_score,
             duplicate_detection_bonus=dup_bonus,
             breakdown=base_reward.breakdown,
             is_trajectory_final=False
@@ -128,6 +125,7 @@ class BatchTriageGrader:
         n = len(self.trajectory_actions)
         if n == 0:
             return BatchTriageReward(
+                score=0.01,
                 step_score=0.01,
                 trajectory_score=0.01,
                 is_trajectory_final=True,
@@ -142,11 +140,8 @@ class BatchTriageGrader:
                 suggested_assignee=action_data.get('suggested_assignee'),
                 suggested_component=action_data.get('suggested_component')
             )
-            # Get raw score by reversing clamp or re-calculating. 
-            # Re-calculating is safer.
             label_match = base_action.label.value == gold['gold_label']
             prio_match = base_action.priority.value == gold['gold_priority']
-            # ... simplified raw sum for internal math
             s = 0.0
             if label_match: s += 0.4
             if prio_match: s += 0.3
@@ -182,10 +177,12 @@ class BatchTriageGrader:
                     consistency_penalty -= 0.05
 
         trajectory_score = avg_step + workload_bonus + consistency_penalty
+        clamped_trajectory_score = clamp_score(trajectory_score)
 
         return BatchTriageReward(
+            score=clamped_trajectory_score,
             step_score=clamp_score(avg_step),
-            trajectory_score=clamp_score(trajectory_score),
+            trajectory_score=clamped_trajectory_score,
             workload_balance_bonus=round(workload_bonus, 4),
             consistency_penalty=round(consistency_penalty, 4),
             is_trajectory_final=True,
