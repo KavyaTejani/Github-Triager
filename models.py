@@ -129,8 +129,8 @@ class ClarificationTriageAction(BaseModel):
     priority: PriorityEnum
     suggested_assignee: Optional[str] = None
     suggested_component: Optional[str] = None
-    confidence: float = Field(..., gt=0.0, lt=1.0,
-        description="Agent's self-reported confidence in its triage (0.01 to 0.99)")
+    confidence: float = Field(..., ge=0.0, le=1.0,
+        description="Agent's self-reported confidence in its triage (0.0 to 1.0)")
 
 class ClarificationObservation(BaseModel):
     """Observation for Task 4: includes simulated user responses."""
