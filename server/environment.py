@@ -12,7 +12,7 @@ from models import (
     ClarificationRequest, ClarificationTriageAction, ClarificationObservation, ClarificationReward
 )
 from server.graders import (
-    LabelClassificationGrader, FullTriageGrader, BatchTriageGrader
+    LabelClassificationGrader, FullTriageGrader, BatchTriageGrader, clamp_score
 )
 
 logger = logging.getLogger(__name__)
@@ -365,12 +365,15 @@ class ClarificationTask:
             suggested_component=action.suggested_component
         )
         base_reward = self.grader.grade(base_action, self.current_issue)
+        # Note: base_reward.score is already clamped (0.01-0.99)
+        # We need the raw base score for penalty calculation
+        raw_base_score = (base_reward.score - 0.01) / 0.98
         
         turn_penalty = self.turn * self.TURN_PENALTY
-        final_score = max(0.0, base_reward.score - turn_penalty)
+        final_raw_score = max(0.0, raw_base_score - turn_penalty)
         
         reward = ClarificationReward(
-            score=round(final_score, 4),
+            score=clamp_score(final_raw_score),
             base_triage_score=base_reward.score,
             turn_penalty=round(turn_penalty, 4),
             turns_taken=self.turn,
@@ -379,7 +382,7 @@ class ClarificationTask:
             breakdown={
                 "base_score": base_reward.score,
                 "turn_penalty": -turn_penalty,
-                "final_score": final_score
+                "final_score": clamp_score(final_raw_score)
             }
         )
         

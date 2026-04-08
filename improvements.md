@@ -34,3 +34,9 @@ All phases of the architectural and logical upgrade have been successfully imple
 *   Added `/metrics` endpoint.
 *   Added `structlog` for JSON logging.
 *   Passed all unit tests.
+
+## Phase 6: Score Range Validation Compliance — ✅ DONE
+*   Implemented `clamp_score` utility to ensure all scores are strictly between 0 and 1 (interval (0.01, 0.99)).
+*   Updated `LabelClassificationGrader`, `FullTriageGrader`, and `BatchTriageGrader` to use clamping.
+*   Updated `ClarificationTask` logic to ensure all rewards (step and final) are strictly within the allowed range.
+*   Updated and verified all unit tests to reflect the new score range.

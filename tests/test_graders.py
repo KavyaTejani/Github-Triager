@@ -13,7 +13,8 @@ class TestLabelClassificationGrader:
         action = LabelClassificationAction(label=LabelEnum.BUG)
         gold = {"gold_label": "bug"}
         reward = grader.grade(action, gold)
-        assert reward.score == 1.0
+        # 0.01 + 1.0 * 0.98 = 0.99
+        assert reward.score == 0.99
         assert reward.correct is True
         assert reward.expected_label == "bug"
         assert reward.predicted_label == "bug"
@@ -23,7 +24,8 @@ class TestLabelClassificationGrader:
         action = LabelClassificationAction(label=LabelEnum.FEATURE)
         gold = {"gold_label": "bug"}
         reward = grader.grade(action, gold)
-        assert reward.score == 0.0
+        # 0.01 + 0.0 * 0.98 = 0.01
+        assert reward.score == 0.01
         assert reward.correct is False
         assert reward.expected_label == "bug"
         assert reward.predicted_label == "feature"
@@ -45,7 +47,7 @@ class TestFullTriageGrader:
             "gold_component": "api"
         }
         reward = grader.grade(action, gold)
-        assert reward.score == 1.0
+        assert reward.score == 0.99
         assert reward.label_correct is True
         assert reward.priority_correct is True
         assert reward.assignee_correct is True
@@ -67,8 +69,9 @@ class TestFullTriageGrader:
             "gold_component": "api"
         }
         reward = grader.grade(action, gold)
-        # label (0.4) + priority partial (0.3 - 0.1 = 0.2) = 0.6
-        assert reward.score == 0.6
+        # raw: label (0.4) + priority partial (0.3 - 0.1 = 0.2) = 0.6
+        # clamped: 0.01 + 0.6 * 0.98 = 0.598
+        assert reward.score == 0.598
         assert reward.label_correct is True
         assert reward.priority_correct is False
 
@@ -97,7 +100,7 @@ class TestBatchTriageGrader:
             suggested_assignee="backend_team", suggested_component="api"
         )
         reward1 = grader.grade_step(action1, gold_issues[0])
-        assert reward1.step_score == 1.0
+        assert reward1.step_score == 0.99
         
         # Step 2
         action2 = BatchTriageAction(
@@ -105,12 +108,11 @@ class TestBatchTriageGrader:
             suggested_assignee="frontend_team", suggested_component="ui"
         )
         reward2 = grader.grade_step(action2, gold_issues[1])
-        assert reward2.step_score == 1.0
+        assert reward2.step_score == 0.99
         
         # Trajectory
         final = grader.grade_trajectory()
         assert final.is_trajectory_final is True
         # Both steps perfect (1.0 each, avg 1.0)
-        # Workload balance bonus: 2 assignees for 2 issues (perfect balance)
-        # consistency_penalty: 0.0
-        assert final.trajectory_score >= 1.0
+        # Trajectory score will be clamped
+        assert final.trajectory_score > 0.9

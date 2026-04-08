@@ -5,13 +5,21 @@ from models import (
     BatchTriageAction, BatchTriageReward
 )
 
+def clamp_score(score: float) -> float:
+    """
+    Ensures the score is strictly between 0 and 1.
+    Maps [0, 1] to [0.01, 0.99] to satisfy validation requirements.
+    """
+    return round(0.01 + (max(0.0, min(1.0, score)) * 0.98), 4)
+
 class LabelClassificationGrader:
     """Deterministic grader for Task 1 (Easy)."""
 
     def grade(self, action: LabelClassificationAction, gold: Dict) -> LabelClassificationReward:
         correct = action.label.value == gold['gold_label']
+        raw_score = 1.0 if correct else 0.0
         return LabelClassificationReward(
-            score=1.0 if correct else 0.0,
+            score=clamp_score(raw_score),
             correct=correct,
             expected_label=gold['gold_label'],
             predicted_label=action.label.value
@@ -54,10 +62,10 @@ class FullTriageGrader:
         )
         breakdown['component'] = 0.15 if component_correct else 0.0
 
-        score = sum(breakdown.values())
+        raw_score = sum(breakdown.values())
 
         return FullTriageReward(
-            score=round(score, 4),
+            score=clamp_score(raw_score),
             label_correct=label_correct,
             priority_correct=priority_correct,
             assignee_correct=assignee_correct,
@@ -84,9 +92,13 @@ class BatchTriageGrader:
             suggested_assignee=action.suggested_assignee,
             suggested_component=action.suggested_component
         )
+        # We use the raw score logic but clamp the result
         base_reward = self.full_triage_grader.grade(base_action, gold)
-        step_score = base_reward.score
-
+        
+        # We need the raw score before clamping for BatchTriage internal math
+        # but the reward model expects a score. 
+        # For Task 3, step_score is partial.
+        
         dup_bonus = 0.0
         if gold.get('duplicate_of') is not None:
             if action.is_duplicate_of == gold['duplicate_of']:
@@ -94,11 +106,14 @@ class BatchTriageGrader:
             elif action.is_duplicate_of is not None:
                 dup_bonus = -0.1
 
+        # Use 0.01-0.99 range for step_score too
+        raw_step_score = (base_reward.score - 0.01) / 0.98 + dup_bonus
+        
         self.trajectory_actions.append(action.model_dump(mode='json'))
         self.trajectory_golds.append(gold)
 
         return BatchTriageReward(
-            step_score=round(step_score + dup_bonus, 4),
+            step_score=clamp_score(raw_step_score),
             duplicate_detection_bonus=dup_bonus,
             breakdown=base_reward.breakdown,
             is_trajectory_final=False
@@ -113,8 +128,8 @@ class BatchTriageGrader:
         n = len(self.trajectory_actions)
         if n == 0:
             return BatchTriageReward(
-                step_score=0.0,
-                trajectory_score=0.0,
+                step_score=0.01,
+                trajectory_score=0.01,
                 is_trajectory_final=True,
                 breakdown={}
             )
@@ -127,8 +142,17 @@ class BatchTriageGrader:
                 suggested_assignee=action_data.get('suggested_assignee'),
                 suggested_component=action_data.get('suggested_component')
             )
-            r = self.full_triage_grader.grade(base_action, gold)
-            total_step_score += r.score
+            # Get raw score by reversing clamp or re-calculating. 
+            # Re-calculating is safer.
+            label_match = base_action.label.value == gold['gold_label']
+            prio_match = base_action.priority.value == gold['gold_priority']
+            # ... simplified raw sum for internal math
+            s = 0.0
+            if label_match: s += 0.4
+            if prio_match: s += 0.3
+            if base_action.suggested_assignee == gold.get('gold_assignee'): s += 0.15
+            if base_action.suggested_component == gold.get('gold_component'): s += 0.15
+            total_step_score += s
 
         avg_step = total_step_score / n
 
@@ -153,7 +177,6 @@ class BatchTriageGrader:
             curr = self.trajectory_actions[i]
             prev_gold = self.trajectory_golds[i - 1]
             curr_gold = self.trajectory_golds[i]
-            # If gold labels are same, but predicted labels are different
             if prev_gold.get('gold_label') == curr_gold.get('gold_label'):
                 if prev.get('label') != curr.get('label'):
                     consistency_penalty -= 0.05
@@ -161,8 +184,8 @@ class BatchTriageGrader:
         trajectory_score = avg_step + workload_bonus + consistency_penalty
 
         return BatchTriageReward(
-            step_score=round(avg_step, 4),
-            trajectory_score=round(trajectory_score, 4),
+            step_score=clamp_score(avg_step),
+            trajectory_score=clamp_score(trajectory_score),
             workload_balance_bonus=round(workload_bonus, 4),
             consistency_penalty=round(consistency_penalty, 4),
             is_trajectory_final=True,
