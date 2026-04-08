@@ -4,12 +4,16 @@ description: GitHub issue triage RL environment
 tasks:
   - id: label_classification
     difficulty: easy
+    grader: grade/label_classification
   - id: full_triage
     difficulty: medium
+    grader: grade/full_triage
   - id: batch_triage_with_context
     difficulty: hard
+    grader: grade/batch_triage_with_context
   - id: clarification_triage
     difficulty: expert
+    grader: grade/clarification_triage
 server:
   host: 0.0.0.0
   port: 8000

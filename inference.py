@@ -25,17 +25,20 @@ def safe_str(s: Any) -> str:
     """Bulletproof string formatting for validation compliance."""
     try:
         val = float(s)
-        clamped = max(0.05, min(0.95, val))
+        clamped = max(0.01, min(0.99, val))
         return f"{clamped:.4f}"
     except:
-        return "0.0500"
+        return "0.0100"
 
 def run_task(env: GitHubTriagerClient, task_id: str):
-    print(f"[START] task_id=\"{task_id}\"")
+    # MANDATORY START LOG
+    print(f"[START] task_id=\"{task_id}\"", flush=True)
     try:
         observation = env.reset(task_id=task_id)
-        last_score = 0.05
+        last_score = 0.01
+        step_count = 0
         for step in range(1, 15):
+            step_count = step
             try:
                 response = llm.chat.completions.create(
                     model=MODEL_NAME,
@@ -48,15 +51,25 @@ def run_task(env: GitHubTriagerClient, task_id: str):
 
             result = env.step(action)
             reward_data = result.get("reward", {})
-            last_score = float(reward_data.get("score", 0.05))
             
-            print(f"[STEP] step={step}, score={safe_str(last_score)}, done={result.get('done')}")
+            # The server now returns clamped scores per my latest updates
+            current_reward = float(reward_data.get("score", 0.01))
+            
+            # Mandatory Step Log
+            print(f"[STEP] step={step}, score={safe_str(current_reward)}, done={result.get('done')}", flush=True)
+            
+            last_score = current_reward # In this env, final 'score' is the total performance
+            
             if result.get("done"): break
             observation = result.get("observation", observation)
 
-        print(f"[END] total_reward={safe_str(last_score)}")
-    except:
-        print(f"[END] total_reward=0.0500")
+        # MANDATORY END LOG (requested format)
+        # print(f"[END] task={task_id} score={final_score} steps={n}", flush=True)
+        final_clamped = max(0.01, min(0.99, float(last_score)))
+        print(f"[END] task={task_id} score={final_clamped:.4f} steps={step_count}", flush=True)
+        
+    except Exception as e:
+        print(f"[END] task={task_id} score=0.0100 steps=0", flush=True)
 
 def main():
     with GitHubTriagerClient(base_url="http://localhost:8000") as env:
