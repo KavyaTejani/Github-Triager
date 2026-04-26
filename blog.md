@@ -24,8 +24,8 @@ We avoided a single binary reward signal to prevent reward hacking:
 - **Task 4** penalises each clarification turn by -0.08, teaching the model to ask only when necessary.
 
 ## Training
-We trained `Llama-3.2-3B-Instruct` using **GRPO** (via HuggingFace TRL) with **Unsloth**
-for 4-bit efficiency. The model rolls out episodes against the live OpenEnv environment
+I trained `Llama-3.2-3B-Instruct` using **GRPO** (via HuggingFace TRL) with **Unsloth**
+for 4-bit efficiency. GRPO (Group Relative Policy Optimization) was chosen over standard PPO because it lets the model directly compare several triage responses for the same issue. This approach teaches the agent to distinguish not just between correct and incorrect actions, but between mediocre and excellent triage, all without requiring enormous amounts of training data. The model rolls out episodes against the live OpenEnv environment
 and receives structured reward feedback after each step.
 
 ![Loss Curve](results/loss_curve.png)
