@@ -17,7 +17,7 @@ pinned: false
 | Resource | Link |
 |----------|------|
 | 🤗 HF Space (Live Environment) | [Kavya011/github-triager-rl](https://huggingface.co/spaces/Kavya011/github-triager-rl) |
-| 📓 Training Notebook | [Open in Colab](https://colab.research.google.com/drive/1example-link) |
+| 📓 Training Notebook | [Open in Colab](https://colab.research.google.com/drive/1samq6TZJDz5tP2tjJoYpRKMLatMd66jP?usp=sharing) |
 | 📝 Blog Post | [Read here](blog.md) |
 | 💻 GitHub | [KavyaTejani/Github-Triager](https://github.com/KavyaTejani/Github-Triager) |
 

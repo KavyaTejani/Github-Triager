@@ -40,5 +40,5 @@ and receives structured reward feedback after each step.
 
 ## Links
 - 🤗 **Live Environment:** https://huggingface.co/spaces/Kavya011/github-triager-rl
-- 📓 **Training Notebook:** [Open in Colab](https://colab.research.google.com/drive/1example-link)
+- 📓 **Training Notebook:** [Open in Colab](https://colab.research.google.com/drive/1samq6TZJDz5tP2tjJoYpRKMLatMd66jP?usp=sharing)
 - 💻 **GitHub:** https://github.com/KavyaTejani/Github-Triager
