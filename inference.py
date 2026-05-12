@@ -45,9 +45,15 @@ def run_task(env: GitHubTriagerClient, task_id: str):
                     messages=[{"role": "system", "content": "Respond with ONLY JSON."}, {"role": "user", "content": str(observation)}],
                     temperature=0.2, max_tokens=300
                 )
-                action = json.loads(re.search(r'\{[^}]+\}', response.choices[0].message.content, re.DOTALL).group(0))
-            except:
-                action = {"label": "bug", "priority": "high", "confidence": 0.5}
+                content = response.choices[0].message.content
+                match = re.search(r'\{.*\}', content, re.DOTALL)
+                if not match:
+                    raise ValueError("No JSON found in LLM response")
+                action = json.loads(match.group(0))
+            except (json.JSONDecodeError, ValueError, Exception) as e:
+                print(f"[ERROR] LLM failed to generate valid JSON: {e}", flush=True)
+                # No fallback. Episode will likely fail or terminate.
+                break 
 
             result = env.step(action)
             reward_data = result.get("reward", {})

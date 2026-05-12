@@ -11,8 +11,8 @@ class GitHubTriagerClient:
         self.base_url = base_url.rstrip('/')
         self.session_id: Optional[str] = None
         self.task_id: Optional[str] = None
-        # Use a longer timeout for LLM-based agents
-        self.http = httpx.Client(base_url=self.base_url, timeout=30.0)
+        # Use a longer timeout for LLM-based agents and remote spaces
+        self.http = httpx.Client(base_url=self.base_url, timeout=120.0)
 
     def reset(self, task_id: str = "label_classification") -> Dict[str, Any]:
         """Reset the environment and start a new episode."""

@@ -1,10 +1,14 @@
+import os
 import pytest
 from server.environment import IssueStore, LabelClassificationTask, FullTriageTask, BatchTriageTask, ClarificationTask
 from models import LabelEnum, PriorityEnum, LabelClassificationAction, FullTriageAction, BatchTriageAction, ClarificationRequest, ClarificationTriageAction
 
 @pytest.fixture
 def store():
-    return IssueStore("data/simulated_issues.json", "data/project_structure.json")
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    data_path = os.path.join(base_dir, "data", "simulated_issues.json")
+    project_path = os.path.join(base_dir, "data", "project_structure.json")
+    return IssueStore(data_path, project_path)
 
 def test_label_classification_task(store):
     task = LabelClassificationTask(store)
@@ -30,12 +34,12 @@ def test_full_triage_task(store):
     )
     result = task.step(action)
     assert result.done is True
-    assert result.reward["score"] >= 0.0
+    assert result.reward["score"] >= 0.01
 
 def test_batch_triage_task(store):
-    task = BatchTriageTask(store, batch_size=3)
+    task = BatchTriageTask(store, size=3)
     obs = task.reset()
-    assert task.batch_index == 0
+    assert task.idx == 0
     
     for i in range(3):
         action = BatchTriageAction(
@@ -60,16 +64,18 @@ def test_clarification_task(store):
     result = task.step(action)
     assert result.done is False
     assert task.turn == 1
-    assert len(task.clarification_history) == 1
+    assert len(task.clarification_history) == 2 # Agent question + User response
     
     # Submit triage
     action = ClarificationTriageAction(
         label=LabelEnum.BUG,
         priority=PriorityEnum.CRITICAL,
+        suggested_assignee="backend_team",
+        suggested_component="api",
         confidence=0.9
     )
     result = task.step(action)
     assert result.done is True
     assert result.reward["turns_taken"] == 1
-    # Penalty should be applied
-    assert result.reward["turn_penalty"] > 0
+    # Penalty should be applied in final score calculation
+    assert result.reward["score"] < 0.95

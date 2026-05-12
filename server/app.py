@@ -56,13 +56,21 @@ async def reset(request: Request, task_id: str = "label_classification"):
 @limiter.limit("5000/minute")
 async def step(request: Request, session_id: str, action: Dict[str, Any]):
     s = session_store.get(session_id)
-    if not s: raise HTTPException(404, "Not found")
+    if not s: raise HTTPException(404, "Session not found")
     task = s["task"]
     try:
-        res = task.step(parse_action(s["task_id"], action))
-        if res.done: session_store.delete(session_id)
+        parsed_action = parse_action(s["task_id"], action)
+        res = task.step(parsed_action)
+        if res.done: 
+            session_store.delete(session_id)
+        else:
+            session_store.set(session_id, s) # Update state
         return res.model_dump()
-    except Exception as e: raise HTTPException(422, str(e))
+    except ValueError as e:
+        raise HTTPException(422, f"Validation error: {str(e)}")
+    except Exception as e:
+        logger.exception("Internal error during step")
+        raise HTTPException(500, "Internal environment error")
 
 @app.post("/grade/{task_id}")
 async def grade_endpoint(task_id: str, payload: Dict[str, Any]):
@@ -94,25 +102,42 @@ async def grade_endpoint(task_id: str, payload: Dict[str, Any]):
         return {"score": 0.1000, "error": str(e)}
 
 @app.websocket("/ws")
-async def websocket_endpoint(ws: WebSocket):
+async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    sessions = {}
     try:
         while True:
             data = await websocket.receive_json()
             if data["type"] == "reset":
                 tid = data.get("task_id", "label_classification")
+                if tid not in TASK_REGISTRY:
+                    await websocket.send_json(make_error_message("Unknown task_id"))
+                    continue
                 task = TASK_REGISTRY[tid](store=issue_store)
                 sid = str(uuid.uuid4())
-                sessions[sid] = {"task": task, "tid": tid}
-                await websocket.send_json(make_observation_message(sid, task.reset()))
+                obs = task.reset()
+                session_store.set(sid, {"task": task, "task_id": tid})
+                await websocket.send_json(make_observation_message(sid, obs))
             elif data["type"] == "step":
-                sid = data["session_id"]
-                if sid in sessions:
-                    res = sessions[sid]["task"].step(parse_action(sessions[sid]["tid"], data["action"]))
-                    if res.done: del sessions[sid]
+                sid = data.get("session_id")
+                s = session_store.get(sid)
+                if not s:
+                    await websocket.send_json(make_error_message("Session not found"))
+                    continue
+                try:
+                    action = parse_action(s["task_id"], data["action"])
+                    res = s["task"].step(action)
+                    if res.done:
+                        session_store.delete(sid)
+                    else:
+                        session_store.set(sid, s)
                     await websocket.send_json(make_step_result_message(res))
-    except: pass
+                except Exception as e:
+                    logger.exception("Error in WS step")
+                    await websocket.send_json(make_error_message(str(e)))
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected")
+    except Exception as e:
+        logger.exception("Fatal error in WebSocket loop")
 
 def main():
     import uvicorn

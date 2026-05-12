@@ -11,6 +11,11 @@ __pycache__/
 # Docker
 .dockerignore
 
+# Training artifacts
+outputs/
+unsloth_compiled_cache/
+*.png
+
 # OpenEnv
 openenv_validate_report.json
 *.env
